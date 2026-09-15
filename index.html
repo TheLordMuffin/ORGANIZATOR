@@ -77,12 +77,17 @@
   function loadTasks(){
     try{
       var raw = localStorage.getItem(TKEY);
-      if(raw) return JSON.parse(raw);
+      if(raw){
+        return JSON.parse(raw).map(function(t){
+          if(t.archived === undefined) t.archived = false;
+          return t;
+        });
+      }
       var old = localStorage.getItem("organizator:v3");
       if(old){
         var parsed = JSON.parse(old);
         return parsed.map(function(t){
-          return { id: t.id || uid(), text: t.text || "", blocked: !!t.blocked, deadline: t.deadline || "", assignee: "" };
+          return { id: t.id || uid(), text: t.text || "", blocked: !!t.blocked, deadline: t.deadline || "", assignee: "", archived:false };
         });
       }
     }catch(e){}
@@ -120,7 +125,7 @@
     document.getElementById("top").innerHTML = "";
     var listEl = document.getElementById("list");
     listEl.innerHTML = "";
-    tasks.forEach(function(t){
+    tasks.filter(function(t){ return !t.archived; }).forEach(function(t){
       listEl.appendChild(renderLine(t));
       if(openId === t.id && openType === "menu") listEl.appendChild(renderMenu(t));
       if(openId === t.id && openType === "assign") listEl.appendChild(renderAssign(t));
@@ -142,7 +147,7 @@
   function addTask(){
     // une tâche vide ne doit jamais s'accumuler si on clique plusieurs fois
     tasks = tasks.filter(function(x){ return x.text.trim() !== ""; });
-    var t = { id: uid(), text: "", blocked:false, deadline:"", assignee:"" };
+    var t = { id: uid(), text: "", blocked:false, deadline:"", assignee:"", archived:false };
     tasks.push(t);
     openId = t.id; openType = "menu";
     saveTasks();
@@ -289,7 +294,9 @@
         render();
         return;
       }
-      if(dir === "h" && Math.abs(dx) >= H_THRESHOLD){
+      if(dir === "h" && dx <= -H_THRESHOLD){
+        archiveTask(t);
+      } else if(dir === "h" && dx >= H_THRESHOLD){
         openId = t.id; openType = "assign";
         render();
       } else if(dir === "v"){
@@ -313,6 +320,13 @@
     if(fromIndex === -1) return;
     tasks.splice(fromIndex, 1);
     tasks.splice(newIndex, 0, t);
+    saveTasks();
+    render();
+  }
+
+  function archiveTask(t){
+    t.archived = true;
+    if(openId === t.id){ openId = null; openType = null; }
     saveTasks();
     render();
   }
