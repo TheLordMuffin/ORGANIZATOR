@@ -53,6 +53,22 @@
   .back:hover{ color:#181816; text-decoration:underline; }
 
   .hint{ font-size:13px; color:#c9c6bd; padding:15px 2px; }
+
+  .auth-row{ display:flex; flex-direction:column; gap:14px; max-width:320px; margin-top:20px; }
+  .auth-row input[type=email], .auth-row input[type=password]{
+    font:inherit; font-size:17px; padding:10px 2px;
+    border:none; border-bottom:2px solid #c9c6bd; background:transparent; color:#181816; outline:none;
+  }
+  .auth-row input[type=email]:focus, .auth-row input[type=password]:focus{ border-bottom-color:#181816; }
+  .auth-submit{
+    font:inherit; font-size:16px; padding:10px 14px; align-self:flex-start;
+    border:1px solid #181816; background:#181816; color:#fafaf8; cursor:pointer; border-radius:4px;
+  }
+  .auth-submit:hover{ opacity:.85; }
+  .auth-switch{ font-size:13px; color:#83807a; cursor:pointer; user-select:none; }
+  .auth-switch:hover{ color:#181816; text-decoration:underline; }
+  .auth-error{ font-size:13px; color:#b3423a; }
+  .auth-notice{ font-size:13px; color:#2f5d50; }
 </style>
 </head>
 <body>
@@ -62,14 +78,31 @@
   <div class="bottom-bar" id="bottom-bar"></div>
 </div>
 
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
 (function(){
   "use strict";
+
+  // Renseigne ces deux valeurs (Supabase → Project Settings → API) pour activer
+  // la connexion et la synchro. Tant qu'elles sont vides, l'app reste 100% locale.
+  var SUPABASE_URL = "";
+  var SUPABASE_ANON_KEY = "";
+
+  var supabaseClient = (SUPABASE_URL && SUPABASE_ANON_KEY && window.supabase)
+    ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
+    : null;
+  var currentUser = null;
+  var authMode = "login";   // "login" ou "signup"
+  var authError = "";
+  var authNotice = "";
+  var authDraftEmail = "";
+  var authDraftPassword = "";
+
   var TKEY = "organizator:v4";
   var CKEY = "organizator:contacts";
   var tasks = loadTasks();
   var contacts = loadContacts();
-  var view = "tasks";           // "tasks" ou "settings"
+  var view = "tasks";           // "auth", "tasks" ou "settings"
   var openId = null;            // id de tâche avec un panneau ouvert
   var openType = null;          // "menu" (nom/bloqué/deadline) ou "assign" (déléguer)
   var contactOpenId = null;     // id de contact en cours d'édition/ajout
@@ -97,8 +130,8 @@
     try{ var raw = localStorage.getItem(CKEY); return raw ? JSON.parse(raw) : []; }
     catch(e){ return []; }
   }
-  function saveTasks(){ try{ localStorage.setItem(TKEY, JSON.stringify(tasks)); }catch(e){} }
-  function saveContacts(){ try{ localStorage.setItem(CKEY, JSON.stringify(contacts)); }catch(e){} }
+  function saveTasks(){ try{ localStorage.setItem(TKEY, JSON.stringify(tasks)); }catch(e){} pushRemote(); }
+  function saveContacts(){ try{ localStorage.setItem(CKEY, JSON.stringify(contacts)); }catch(e){} pushRemote(); }
   function uid(){ return Date.now().toString(36) + Math.random().toString(36).slice(2,7); }
   function todayStr(){
     var d = new Date();
@@ -115,8 +148,151 @@
   }
 
   function render(){
-    if(view === "settings") renderSettingsView();
+    if(view === "auth") renderAuthView();
+    else if(view === "settings") renderSettingsView();
     else renderTasksView();
+  }
+
+  // ---------- authentification ----------
+
+  function pushRemote(){
+    if(!supabaseClient || !currentUser) return;
+    supabaseClient.from("organizator_state").upsert({
+      user_id: currentUser.id,
+      tasks: tasks,
+      contacts: contacts,
+      updated_at: new Date().toISOString()
+    }).then(function(res){
+      if(res.error) console.error("Supabase upsert:", res.error.message);
+    });
+  }
+
+  function loadRemoteThenRender(){
+    supabaseClient.from("organizator_state").select("*").eq("user_id", currentUser.id).maybeSingle()
+      .then(function(res){
+        if(res.error){ console.error("Supabase select:", res.error.message); view = "tasks"; render(); return; }
+        if(res.data){
+          tasks = res.data.tasks || [];
+          contacts = res.data.contacts || [];
+          saveLocalOnly();
+        } else {
+          // premier login : on pousse l'état local existant comme point de départ
+          pushRemote();
+        }
+        view = "tasks";
+        render();
+      });
+  }
+
+  function saveLocalOnly(){
+    try{ localStorage.setItem(TKEY, JSON.stringify(tasks)); }catch(e){}
+    try{ localStorage.setItem(CKEY, JSON.stringify(contacts)); }catch(e){}
+  }
+
+  function renderAuthView(){
+    document.getElementById("top").innerHTML = "";
+    document.getElementById("bottom-bar").innerHTML = "";
+    var listEl = document.getElementById("list");
+    listEl.innerHTML = "";
+
+    var title = document.createElement("div");
+    title.className = "hint";
+    title.style.color = "#181816"; title.style.fontSize = "17px"; title.style.padding = "15px 2px 0";
+    title.textContent = authMode === "signup" ? "Créer un compte" : "Se connecter";
+    listEl.appendChild(title);
+
+    var wrap = document.createElement("div");
+    wrap.className = "auth-row";
+
+    var email = document.createElement("input");
+    email.type = "email"; email.placeholder = "email"; email.autocomplete = "email";
+    email.value = authDraftEmail;
+    email.addEventListener("input", function(){ authDraftEmail = email.value; });
+
+    var pass = document.createElement("input");
+    pass.type = "password"; pass.placeholder = "mot de passe";
+    pass.autocomplete = authMode === "signup" ? "new-password" : "current-password";
+    pass.value = authDraftPassword;
+    pass.addEventListener("input", function(){ authDraftPassword = pass.value; });
+
+    var errorEl = document.createElement("div");
+    errorEl.className = "auth-error";
+    if(authError) errorEl.textContent = authError;
+
+    var noticeEl = document.createElement("div");
+    noticeEl.className = "auth-notice";
+    if(authNotice) noticeEl.textContent = authNotice;
+
+    var submit = document.createElement("button");
+    submit.type = "button";
+    submit.className = "auth-submit";
+    submit.textContent = authMode === "signup" ? "Créer le compte" : "Se connecter";
+
+    var switchLink = document.createElement("span");
+    switchLink.className = "auth-switch";
+    switchLink.textContent = authMode === "signup" ? "déjà un compte ? se connecter" : "pas de compte ? en créer un";
+    switchLink.addEventListener("click", function(){
+      authMode = authMode === "signup" ? "login" : "signup";
+      authError = ""; authNotice = "";
+      render();
+    });
+
+    function submitForm(){
+      authError = ""; authNotice = "";
+      var e = email.value.trim(), p = pass.value;
+      if(!e || !p){ authError = "Email et mot de passe obligatoires."; render(); return; }
+      submit.disabled = true;
+      var call = authMode === "signup"
+        ? supabaseClient.auth.signUp({ email: e, password: p })
+        : supabaseClient.auth.signInWithPassword({ email: e, password: p });
+      call.then(function(res){
+        submit.disabled = false;
+        if(res.error){ authError = res.error.message; render(); return; }
+        if(authMode === "signup" && !res.data.session){
+          authNotice = "Compte créé — vérifie ton email pour confirmer avant de te connecter.";
+          authMode = "login";
+          authDraftPassword = "";
+          render();
+          return;
+        }
+        currentUser = res.data.session.user;
+        authDraftEmail = ""; authDraftPassword = "";
+        view = "tasks";
+        loadRemoteThenRender();
+      });
+    }
+    submit.addEventListener("click", submitForm);
+    pass.addEventListener("keydown", function(e){ if(e.key === "Enter") submitForm(); });
+
+    wrap.appendChild(email);
+    wrap.appendChild(pass);
+    if(authError) wrap.appendChild(errorEl);
+    if(authNotice) wrap.appendChild(noticeEl);
+    wrap.appendChild(submit);
+    wrap.appendChild(switchLink);
+    listEl.appendChild(wrap);
+  }
+
+  function logout(){
+    supabaseClient.auth.signOut().then(function(){
+      currentUser = null;
+      view = "auth"; authMode = "login";
+      render();
+    });
+  }
+
+  function boot(){
+    if(!supabaseClient){ render(); return; }
+    supabaseClient.auth.getSession().then(function(res){
+      var session = res.data.session;
+      if(session){
+        currentUser = session.user;
+        loadRemoteThenRender();
+      } else {
+        view = "auth";
+        render();
+      }
+    });
   }
 
   // ---------- vue tâches ----------
@@ -366,6 +542,15 @@
     add.className = "icon-btn"; add.textContent = "+";
     add.addEventListener("click", addContact);
     bar.appendChild(add);
+
+    if(supabaseClient && currentUser){
+      var out = document.createElement("span");
+      out.className = "auth-switch";
+      out.style.marginLeft = "auto";
+      out.textContent = "se déconnecter (" + currentUser.email + ")";
+      out.addEventListener("click", logout);
+      bar.appendChild(out);
+    }
   }
 
   function addContact(){
@@ -468,7 +653,7 @@
     if(view === "tasks" && openId){ openId = null; openType = null; render(); }
   });
 
-  render();
+  boot();
 })();
 </script>
 </body>
