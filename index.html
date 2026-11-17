@@ -406,10 +406,18 @@
   // ---------- vue tâches ----------
 
   function renderTasksView(){
-    document.getElementById("top").innerHTML = "";
+    var top = document.getElementById("top");
+    top.innerHTML = "";
+    var pullIndicator = document.createElement("div");
+    pullIndicator.className = "hint"; pullIndicator.id = "pull-indicator";
+    pullIndicator.style.padding = "0 2px 6px"; pullIndicator.style.minHeight = "16px";
+    top.appendChild(pullIndicator);
+
+    var visible = tasks.filter(function(t){ return !t.archived; });
+
     var listEl = document.getElementById("list");
     listEl.innerHTML = "";
-    tasks.filter(function(t){ return !t.archived; }).forEach(function(t){
+    visible.forEach(function(t){
       listEl.appendChild(renderLine(t));
       if(openId === t.id && openType === "menu") listEl.appendChild(renderMenu(t));
       if(openId === t.id && openType === "assign") listEl.appendChild(renderAssign(t));
@@ -681,6 +689,62 @@
     saveTasksLocal();
     render();
   }
+
+  function sortByDeadline(){
+    var open = tasks.filter(function(t){ return !t.archived; });
+    var archivedOnes = tasks.filter(function(t){ return t.archived; });
+    open.sort(function(a, b){
+      if(!a.deadline && !b.deadline) return 0;
+      if(!a.deadline) return 1;
+      if(!b.deadline) return -1;
+      return a.deadline < b.deadline ? -1 : a.deadline > b.deadline ? 1 : 0;
+    });
+    tasks = open.concat(archivedOnes);
+    tasks.forEach(function(x, i){
+      if(x.position !== i){ x.position = i; if(isMine(x)) saveTaskRemote(x); }
+    });
+    saveTasksLocal();
+    render();
+  }
+
+  // Tirer la page vers le bas (depuis le fond, pas depuis une ligne) trie par échéance.
+  (function attachPullToSort(){
+    var startY = 0, dragging = false, armed = false;
+    var PULL_THRESHOLD = 70;
+
+    function isBackgroundTarget(el){
+      return !el.closest(".line, .panel, .icon-btn, .back, .auth-switch, .link, .request-row, input, button");
+    }
+
+    document.addEventListener("pointerdown", function(e){
+      if(view !== "tasks") return;
+      if(window.scrollY > 0) return;
+      if(!isBackgroundTarget(e.target)) return;
+      startY = e.clientY; dragging = true; armed = false;
+    });
+    document.addEventListener("pointermove", function(e){
+      if(!dragging) return;
+      var dy = e.clientY - startY;
+      if(dy <= 0){ armed = false; updatePullIndicator(false, false); return; }
+      armed = dy >= PULL_THRESHOLD;
+      updatePullIndicator(true, armed);
+    });
+    function finish(){
+      if(!dragging) return;
+      dragging = false;
+      if(armed) sortByDeadline();
+      updatePullIndicator(false, false);
+    }
+    document.addEventListener("pointerup", finish);
+    document.addEventListener("pointercancel", finish);
+
+    function updatePullIndicator(active, isArmed){
+      var el = document.getElementById("pull-indicator");
+      if(!el) return;
+      if(!active){ el.textContent = ""; return; }
+      el.textContent = isArmed ? "↓ relâche pour trier par échéance" : "↓ tire encore un peu…";
+    }
+  })();
 
   function archiveTask(t){
     t.archived = true;
