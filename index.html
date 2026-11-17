@@ -13,12 +13,20 @@
   }
   .wrap{max-width:600px; margin:0 auto;}
 
+  .line-wrap{ position:relative; background:#fafaf8; }
+  .trash-bg{
+    position:absolute; inset:0; display:flex; align-items:center; justify-content:flex-end;
+    padding-right:14px; font-size:20px; color:#c9c6bd; pointer-events:none;
+  }
+  .trash-bg.armed{ color:#b3423a; }
+
   .line{
     display:flex; align-items:baseline; gap:10px;
     font-size:21px; line-height:1.35; padding:15px 2px;
     border-bottom:2px solid #c9c6bd;
     cursor:pointer; white-space:pre-wrap; word-break:break-word;
     touch-action:none; user-select:none;
+    background:#fafaf8; position:relative;
   }
   .line.blocked{ border-bottom:2px solid #b3423a; }
   .line-text{ flex:1; min-width:0; }
@@ -347,6 +355,14 @@
   }
 
   function renderLine(t){
+    var wrap = document.createElement("div");
+    wrap.className = "line-wrap";
+
+    var trashBg = document.createElement("div");
+    trashBg.className = "trash-bg";
+    trashBg.textContent = "🗑";
+    wrap.appendChild(trashBg);
+
     var row = document.createElement("div");
     row.className = "line" + (t.blocked ? " blocked" : "");
     row.dataset.id = t.id;
@@ -370,8 +386,9 @@
       row.appendChild(d);
     }
 
-    attachGestures(row, t);
-    return row;
+    attachGestures(row, t, trashBg);
+    wrap.appendChild(row);
+    return wrap;
   }
 
   function renderMenu(t){
@@ -453,7 +470,7 @@
     return panel;
   }
 
-  function attachGestures(el, t){
+  function attachGestures(el, t, trashBg){
     var startX = 0, startY = 0, dx = 0, dy = 0, dragging = false, moved = false, dir = null;
     var H_THRESHOLD = 70, LOCK = 8;
 
@@ -473,6 +490,11 @@
       }
       if(dir === "h") el.style.transform = "translateX(" + dx + "px)";
       else if(dir === "v") el.style.transform = "translateY(" + dy + "px)";
+      if(dir === "h" && dx < 0){
+        trashBg.classList.toggle("armed", dx <= -H_THRESHOLD);
+      } else {
+        trashBg.classList.remove("armed");
+      }
     });
     function end(e){
       if(!dragging) return;
@@ -480,6 +502,7 @@
       el.style.transition = "transform .15s ease";
       el.style.transform = "";
       el.style.zIndex = ""; el.style.boxShadow = ""; el.style.background = "";
+      trashBg.classList.remove("armed");
 
       if(!moved){
         openId = t.id; openType = "menu";
