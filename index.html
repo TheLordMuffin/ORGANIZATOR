@@ -19,7 +19,7 @@
     gap:2px; padding-right:14px; color:#c9c6bd; pointer-events:none;
   }
   .trash-bg .icon{ font-size:20px; }
-  .trash-bg .word{ font-size:12px; font-weight:700; letter-spacing:.09em; white-space:nowrap; }
+  .trash-bg .word{ font-size:12px; font-weight:700; letter-spacing:.55em; white-space:nowrap; padding-right:.1em; }
   .trash-bg.armed{ color:#b3423a; }
 
   .line{
@@ -621,7 +621,7 @@
     var mine = isMine(t);
     var locked = mine && !!t.assigneeId; // tâche déléguée : pas de suppression/archivage de ce côté
     var startX = 0, startY = 0, dx = 0, dy = 0, dragging = false, moved = false, dir = null;
-    var H_THRESHOLD = 70, DELETE_THRESHOLD = 85, LOCK = 8;
+    var H_THRESHOLD = 70, DELETE_THRESHOLD = 130, LOCK = 8;
 
     el.addEventListener("pointerdown", function(e){
       startX = e.clientX; startY = e.clientY; dx = 0; dy = 0;
