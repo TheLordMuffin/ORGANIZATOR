@@ -29,8 +29,10 @@
     background:#fafaf8; position:relative;
   }
   .line.blocked{ border-bottom:2px solid #b3423a; }
+  .line.received{ border-bottom-style:dashed; }
   .line-text{ flex:1; min-width:0; }
   .line-assignee{ flex:none; font-size:14px; color:#2f5d50; }
+  .line-from{ flex:none; font-size:14px; color:#6b4a8a; }
   .line-date{ flex:none; font-size:14px; color:#83807a; }
   .line-date.retard{ color:#b3423a; font-weight:700; }
   .line-sub{ flex:none; font-size:13px; color:#83807a; }
@@ -52,6 +54,7 @@
   .panel .chip{ color:#2f5d50; }
   .panel .chip:hover{ text-decoration:underline; }
   .panel .sep{ color:#c9c6bd; }
+  .panel .static{ color:#181816; font-size:15px; }
 
   .bottom-bar{ display:flex; justify-content:center; align-items:center; gap:28px; padding:22px 0; }
   .icon-btn{ font-size:22px; color:#c9c6bd; cursor:pointer; user-select:none; }
@@ -61,6 +64,18 @@
   .back:hover{ color:#181816; text-decoration:underline; }
 
   .hint{ font-size:13px; color:#c9c6bd; padding:15px 2px; }
+  .contact-status{ flex:none; font-size:12px; color:#c9c6bd; }
+  .contact-status.accepted{ color:#2f5d50; }
+  .contact-status.pending{ color:#b8752a; }
+
+  .request-row{
+    display:flex; align-items:center; gap:14px; padding:12px 2px; font-size:14px;
+    border-bottom:1px solid #e2e0da; flex-wrap:wrap;
+  }
+  .request-row b{ font-weight:600; }
+  .request-row .accept{ color:#2f5d50; cursor:pointer; }
+  .request-row .decline{ color:#b3423a; cursor:pointer; }
+  .request-row .accept:hover, .request-row .decline:hover{ text-decoration:underline; }
 
   .auth-row{ display:flex; flex-direction:column; gap:14px; max-width:320px; margin-top:20px; }
   .auth-row input[type=email], .auth-row input[type=password]{
@@ -106,40 +121,29 @@
   var authDraftEmail = "";
   var authDraftPassword = "";
 
-  var TKEY = "organizator:v4";
+  var TKEY = "organizator:v5";
   var CKEY = "organizator:contacts";
-  var tasks = loadTasks();
-  var contacts = loadContacts();
+  var tasks = loadTasksLocal();
+  var contacts = loadContactsLocal();
+  var links = [];               // lignes contact_links (demandes envoyées/reçues)
   var view = "tasks";           // "auth", "tasks" ou "settings"
   var openId = null;            // id de tâche avec un panneau ouvert
   var openType = null;          // "menu" (nom/bloqué/deadline) ou "assign" (déléguer)
   var contactOpenId = null;     // id de contact en cours d'édition/ajout
 
-  function loadTasks(){
+  function loadTasksLocal(){
     try{
       var raw = localStorage.getItem(TKEY);
-      if(raw){
-        return JSON.parse(raw).map(function(t){
-          if(t.archived === undefined) t.archived = false;
-          return t;
-        });
-      }
-      var old = localStorage.getItem("organizator:v3");
-      if(old){
-        var parsed = JSON.parse(old);
-        return parsed.map(function(t){
-          return { id: t.id || uid(), text: t.text || "", blocked: !!t.blocked, deadline: t.deadline || "", assignee: "", archived:false };
-        });
-      }
+      if(raw) return JSON.parse(raw);
     }catch(e){}
     return [];
   }
-  function loadContacts(){
+  function loadContactsLocal(){
     try{ var raw = localStorage.getItem(CKEY); return raw ? JSON.parse(raw) : []; }
     catch(e){ return []; }
   }
-  function saveTasks(){ try{ localStorage.setItem(TKEY, JSON.stringify(tasks)); }catch(e){} pushRemote(); }
-  function saveContacts(){ try{ localStorage.setItem(CKEY, JSON.stringify(contacts)); }catch(e){} pushRemote(); }
+  function saveTasksLocal(){ try{ localStorage.setItem(TKEY, JSON.stringify(tasks)); }catch(e){} }
+  function saveContactsLocal(){ try{ localStorage.setItem(CKEY, JSON.stringify(contacts)); }catch(e){} }
   function uid(){ return Date.now().toString(36) + Math.random().toString(36).slice(2,7); }
   function todayStr(){
     var d = new Date();
@@ -154,6 +158,7 @@
     var p = dateStr.split("-");
     return p[2] + "/" + p[1];
   }
+  function isMine(t){ return !currentUser || t.ownerId === currentUser.id; }
 
   function render(){
     if(view === "auth") renderAuthView();
@@ -163,42 +168,121 @@
 
   // ---------- authentification ----------
 
-  function pushRemote(){
+  function saveTaskRemote(t){
     if(!supabaseClient || !currentUser) return;
-    supabaseClient.from("organizator_state").upsert({
-      user_id: currentUser.id,
-      tasks: tasks,
-      contacts: contacts,
-      updated_at: new Date().toISOString()
+    supabaseClient.from("tasks").upsert({
+      id: t.id,
+      owner_id: t.ownerId,
+      owner_email: t.ownerEmail,
+      assignee_id: t.assigneeId || null,
+      assignee_email: t.assigneeEmail || null,
+      text: t.text,
+      blocked: !!t.blocked,
+      deadline: t.deadline || null,
+      archived: !!t.archived,
+      position: t.position || 0
     }).then(function(res){
-      if(res.error) console.error("Supabase upsert:", res.error.message);
-    }).catch(function(err){ console.error("Supabase upsert (réseau):", err.message); });
+      if(res.error) console.error("Supabase upsert tasks:", res.error.message);
+    }).catch(function(err){ console.error("Supabase upsert tasks (réseau):", err.message); });
+  }
+
+  function deleteTaskRemote(id){
+    if(!supabaseClient || !currentUser) return;
+    supabaseClient.from("tasks").delete().eq("id", id)
+      .then(function(res){ if(res.error) console.error("Supabase delete task:", res.error.message); })
+      .catch(function(err){ console.error("Supabase delete task (réseau):", err.message); });
+  }
+
+  function fetchRemoteTasks(){
+    return supabaseClient.from("tasks").select("*")
+      .or("owner_id.eq." + currentUser.id + ",assignee_id.eq." + currentUser.id)
+      .eq("archived", false)
+      .order("position");
+  }
+
+  function mapRemoteTask(row){
+    return {
+      id: row.id, text: row.text, blocked: !!row.blocked, deadline: row.deadline || "",
+      archived: !!row.archived, position: row.position || 0,
+      ownerId: row.owner_id, ownerEmail: row.owner_email,
+      assigneeId: row.assignee_id, assigneeEmail: row.assignee_email
+    };
+  }
+
+  function fetchLinks(){
+    return supabaseClient.from("contact_links").select("*")
+      .or("requester_id.eq." + currentUser.id + ",target_id.eq." + currentUser.id);
+  }
+
+  function refreshLinks(cb){
+    if(!supabaseClient || !currentUser){ if(cb) cb(); return; }
+    fetchLinks().then(function(res){
+      if(!res.error) links = res.data || [];
+      if(cb) cb();
+    }).catch(function(){ if(cb) cb(); });
+  }
+
+  function sendLinkRequest(email){
+    if(!supabaseClient || !currentUser || !email) return;
+    if(email === currentUser.email) return;
+    var already = links.some(function(l){
+      return (l.requester_email === currentUser.email && l.target_email === email)
+          || (l.target_email === currentUser.email && l.requester_email === email);
+    });
+    if(already) return;
+    supabaseClient.rpc("find_user_id_by_email", { lookup_email: email }).then(function(res){
+      if(res.error || !res.data) return; // pas de compte avec cet email : rien à lier
+      supabaseClient.from("contact_links").insert({
+        requester_id: currentUser.id,
+        target_id: res.data,
+        requester_email: currentUser.email,
+        target_email: email
+      }).then(function(r){
+        if(!r.error) refreshLinks(render);
+      }).catch(function(){});
+    }).catch(function(){});
+  }
+
+  function respondLink(link, accept){
+    if(!supabaseClient) return;
+    supabaseClient.from("contact_links").update({
+      status: accept ? "accepted" : "declined",
+      responded_at: new Date().toISOString()
+    }).eq("id", link.id).then(function(res){
+      if(!res.error) refreshLinks(render);
+    }).catch(function(){});
+  }
+
+  function linkStatusFor(email){
+    var l = links.find(function(x){
+      return (x.requester_email === currentUser.email && x.target_email === email)
+          || (x.target_email === currentUser.email && x.requester_email === email);
+    });
+    return l ? l.status : null;
   }
 
   function loadRemoteThenRender(){
-    supabaseClient.from("organizator_state").select("*").eq("user_id", currentUser.id).maybeSingle()
-      .then(function(res){
-        if(res.error){ console.error("Supabase select:", res.error.message); view = "tasks"; render(); return; }
-        if(res.data){
-          tasks = res.data.tasks || [];
-          contacts = res.data.contacts || [];
-          saveLocalOnly();
-        } else {
-          // premier login : on pousse l'état local existant comme point de départ
-          pushRemote();
+    refreshLinks(function(){
+      fetchRemoteTasks().then(function(res){
+        if(res.error){ console.error("Supabase select tasks:", res.error.message); view = "tasks"; render(); return; }
+        if(res.data && res.data.length){
+          tasks = res.data.map(mapRemoteTask);
+          saveTasksLocal();
+        } else if(tasks.length){
+          // premier login avec des tâches locales : on les pousse comme point de départ
+          tasks.forEach(function(t){
+            t.ownerId = currentUser.id; t.ownerEmail = currentUser.email;
+            if(!t.id) t.id = uid();
+            saveTaskRemote(t);
+          });
         }
         view = "tasks";
         render();
-      })
-      .catch(function(err){
-        console.error("Supabase select (réseau):", err.message);
-        view = "tasks"; render(); // on continue avec les données locales plutôt que de rester bloqué
+      }).catch(function(err){
+        console.error("Supabase select tasks (réseau):", err.message);
+        view = "tasks"; render();
       });
-  }
-
-  function saveLocalOnly(){
-    try{ localStorage.setItem(TKEY, JSON.stringify(tasks)); }catch(e){}
-    try{ localStorage.setItem(CKEY, JSON.stringify(contacts)); }catch(e){}
+    });
   }
 
   function renderAuthView(){
@@ -291,11 +375,11 @@
 
   function logout(){
     supabaseClient.auth.signOut().then(function(){
-      currentUser = null;
+      currentUser = null; links = [];
       view = "auth"; authMode = "login";
       render();
     }).catch(function(){
-      currentUser = null;
+      currentUser = null; links = [];
       view = "auth"; authMode = "login";
       render();
     });
@@ -340,21 +424,37 @@
     var settings = document.createElement("span");
     settings.className = "icon-btn"; settings.textContent = "⚙";
     settings.title = "réglages";
-    settings.addEventListener("click", function(){ view = "settings"; render(); });
+    settings.addEventListener("click", function(){
+      view = "settings";
+      if(supabaseClient && currentUser) refreshLinks(render);
+      else render();
+    });
     bar.appendChild(settings);
   }
 
   function addTask(){
     // une tâche vide ne doit jamais s'accumuler si on clique plusieurs fois
-    tasks = tasks.filter(function(x){ return x.text.trim() !== ""; });
-    var t = { id: uid(), text: "", blocked:false, deadline:"", assignee:"", archived:false };
+    var empties = tasks.filter(function(x){ return x.text.trim() === "" && isMine(x); });
+    tasks = tasks.filter(function(x){ return x.text.trim() !== "" || !isMine(x); });
+    empties.forEach(function(x){ deleteTaskRemote(x.id); });
+    var t = {
+      id: uid(), text: "", blocked:false, deadline:"", archived:false, position: tasks.length,
+      ownerId: currentUser ? currentUser.id : null, ownerEmail: currentUser ? currentUser.email : null,
+      assigneeId: null, assigneeEmail: null
+    };
     tasks.push(t);
     openId = t.id; openType = "menu";
-    saveTasks();
+    saveTasksLocal();
     render();
   }
 
+  function contactNameByEmail(email){
+    var c = contacts.find(function(x){ return x.email === email; });
+    return c ? c.name : email;
+  }
+
   function renderLine(t){
+    var mine = isMine(t);
     var wrap = document.createElement("div");
     wrap.className = "line-wrap";
 
@@ -364,7 +464,7 @@
     wrap.appendChild(trashBg);
 
     var row = document.createElement("div");
-    row.className = "line" + (t.blocked ? " blocked" : "");
+    row.className = "line" + (t.blocked ? " blocked" : "") + (mine ? "" : " received");
     row.dataset.id = t.id;
 
     var text = document.createElement("span");
@@ -372,11 +472,17 @@
     text.textContent = t.text;
     row.appendChild(text);
 
-    if(t.assignee){
+    if(mine && t.assigneeEmail){
       var a = document.createElement("span");
       a.className = "line-assignee";
-      a.textContent = "→ " + t.assignee;
+      a.textContent = "→ " + contactNameByEmail(t.assigneeEmail);
       row.appendChild(a);
+    }
+    if(!mine){
+      var f = document.createElement("span");
+      f.className = "line-from";
+      f.textContent = "← " + t.ownerEmail;
+      row.appendChild(f);
     }
 
     if(t.deadline){
@@ -392,41 +498,57 @@
   }
 
   function renderMenu(t){
+    var mine = isMine(t);
     var panel = document.createElement("div");
     panel.className = "panel";
 
-    var nameInput = document.createElement("input");
-    nameInput.type = "text";
-    nameInput.value = t.text;
-    function commitName(){
-      var v = nameInput.value.trim();
-      if(!v){
-        tasks = tasks.filter(function(x){ return x.id !== t.id; });
-        openId = null;
-        saveTasks(); render();
-        return;
+    if(mine){
+      var nameInput = document.createElement("input");
+      nameInput.type = "text";
+      nameInput.value = t.text;
+      function commitName(){
+        var v = nameInput.value.trim();
+        if(!v){
+          tasks = tasks.filter(function(x){ return x.id !== t.id; });
+          deleteTaskRemote(t.id);
+          openId = null;
+          saveTasksLocal(); render();
+          return;
+        }
+        if(v === t.text) return; // rien n'a changé : pas de re-rendu, ça casserait un clic en cours sur un autre contrôle du panneau
+        t.text = v;
+        saveTasksLocal(); saveTaskRemote(t); render();
       }
-      if(v === t.text) return; // rien n'a changé : pas de re-rendu, ça casserait un clic en cours sur un autre contrôle du panneau
-      t.text = v;
-      saveTasks(); render();
+      nameInput.addEventListener("keydown", function(e){
+        if(e.key === "Enter") commitName();
+      });
+      nameInput.addEventListener("blur", commitName);
+      panel.appendChild(nameInput);
+    } else {
+      var staticName = document.createElement("span");
+      staticName.className = "static";
+      staticName.textContent = t.text;
+      panel.appendChild(staticName);
     }
-    nameInput.addEventListener("keydown", function(e){
-      if(e.key === "Enter") commitName();
-    });
-    nameInput.addEventListener("blur", commitName);
-    panel.appendChild(nameInput);
 
     var toggle = document.createElement("span");
     toggle.className = "toggle" + (t.blocked ? " on" : "");
     toggle.textContent = "bloqué";
-    toggle.addEventListener("click", function(){ t.blocked = !t.blocked; saveTasks(); render(); });
+    toggle.addEventListener("click", function(){ t.blocked = !t.blocked; saveTasksLocal(); saveTaskRemote(t); render(); });
     panel.appendChild(toggle);
 
-    var dateInput = document.createElement("input");
-    dateInput.type = "date";
-    dateInput.value = t.deadline || "";
-    dateInput.addEventListener("change", function(e){ t.deadline = e.target.value; saveTasks(); render(); });
-    panel.appendChild(dateInput);
+    if(mine){
+      var dateInput = document.createElement("input");
+      dateInput.type = "date";
+      dateInput.value = t.deadline || "";
+      dateInput.addEventListener("change", function(e){ t.deadline = e.target.value; saveTasksLocal(); saveTaskRemote(t); render(); });
+      panel.appendChild(dateInput);
+    } else if(t.deadline){
+      var staticDate = document.createElement("span");
+      staticDate.className = "static";
+      staticDate.textContent = fmtDate(t.deadline);
+      panel.appendChild(staticDate);
+    }
 
     return panel;
   }
@@ -444,33 +566,30 @@
         }
         var chip = document.createElement("span");
         chip.className = "chip";
-        chip.textContent = c.name;
+        chip.textContent = c.name + (linkStatusFor(c.email) === "accepted" ? "" : " (local)");
         chip.addEventListener("click", function(){
-          t.assignee = c.name;
+          if(linkStatusFor(c.email) === "accepted"){
+            var link = links.find(function(l){
+              return (l.requester_email === currentUser.email && l.target_email === c.email)
+                  || (l.target_email === currentUser.email && l.requester_email === c.email);
+            });
+            t.assigneeId = link.requester_email === currentUser.email ? link.target_id : link.requester_id;
+            t.assigneeEmail = c.email;
+          } else {
+            t.assigneeEmail = c.email || c.name;
+          }
           openId = null;
-          saveTasks(); render();
+          saveTasksLocal(); saveTaskRemote(t); render();
         });
         panel.appendChild(chip);
       });
     }
 
-    var input = document.createElement("input");
-    input.type = "text";
-    input.placeholder = "ou un autre nom…";
-    input.value = t.assignee || "";
-    function commit(){
-      t.assignee = input.value.trim();
-      openId = null;
-      saveTasks(); render();
-    }
-    input.addEventListener("keydown", function(e){ if(e.key === "Enter") commit(); });
-    input.addEventListener("blur", commit);
-    panel.appendChild(input);
-
     return panel;
   }
 
   function attachGestures(el, t, trashBg){
+    var mine = isMine(t);
     var startX = 0, startY = 0, dx = 0, dy = 0, dragging = false, moved = false, dir = null;
     var H_THRESHOLD = 70, LOCK = 8;
 
@@ -485,7 +604,8 @@
       dx = e.clientX - startX; dy = e.clientY - startY;
       if(!dir && (Math.abs(dx) > LOCK || Math.abs(dy) > LOCK)){
         dir = Math.abs(dy) > Math.abs(dx) ? "v" : "h";
-        moved = true;
+        if(dir === "h" && !mine && dx > 0) dir = null; // pas d'assignation sur une tâche reçue
+        moved = !!dir;
         if(dir === "v"){ el.style.zIndex = "5"; el.style.boxShadow = "0 4px 10px rgba(0,0,0,.15)"; el.style.background = "#fafaf8"; }
       }
       if(dir === "h") el.style.transform = "translateX(" + dx + "px)";
@@ -511,10 +631,10 @@
       }
       if(dir === "h" && dx <= -H_THRESHOLD){
         archiveTask(t);
-      } else if(dir === "h" && dx >= H_THRESHOLD){
+      } else if(dir === "h" && dx >= H_THRESHOLD && mine){
         openId = t.id; openType = "assign";
         render();
-      } else if(dir === "v"){
+      } else if(dir === "v" && mine){
         reorder(t, e.clientY);
       }
     }
@@ -535,14 +655,18 @@
     if(fromIndex === -1) return;
     tasks.splice(fromIndex, 1);
     tasks.splice(newIndex, 0, t);
-    saveTasks();
+    tasks.forEach(function(x, i){
+      if(x.position !== i){ x.position = i; if(isMine(x)) saveTaskRemote(x); }
+    });
+    saveTasksLocal();
     render();
   }
 
   function archiveTask(t){
     t.archived = true;
     if(openId === t.id){ openId = null; openType = null; }
-    saveTasks();
+    saveTasksLocal();
+    saveTaskRemote(t);
     render();
   }
 
@@ -559,6 +683,12 @@
 
     var listEl = document.getElementById("list");
     listEl.innerHTML = "";
+
+    var pendingIn = links.filter(function(l){ return l.status === "pending" && l.target_email === currentUser.email; });
+    pendingIn.forEach(function(l){
+      listEl.appendChild(renderRequestRow(l));
+    });
+
     if(!contacts.length && contactOpenId === null){
       var hint = document.createElement("div");
       hint.className = "hint";
@@ -592,9 +722,32 @@
     }
   }
 
+  function renderRequestRow(l){
+    var row = document.createElement("div");
+    row.className = "request-row";
+    var txt = document.createElement("span");
+    txt.innerHTML = "<b>" + escapeHtml(l.requester_email) + "</b> veut se lier";
+    row.appendChild(txt);
+    var accept = document.createElement("span");
+    accept.className = "accept"; accept.textContent = "accepter";
+    accept.addEventListener("click", function(){ respondLink(l, true); });
+    row.appendChild(accept);
+    var decline = document.createElement("span");
+    decline.className = "decline"; decline.textContent = "refuser";
+    decline.addEventListener("click", function(){ respondLink(l, false); });
+    row.appendChild(decline);
+    return row;
+  }
+
+  function escapeHtml(s){
+    return String(s||"").replace(/[&<>"']/g, function(c){
+      return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c];
+    });
+  }
+
   function addContact(){
     contacts = contacts.filter(function(c){ return c.name.trim() !== ""; });
-    saveContacts();
+    saveContactsLocal();
     contactOpenId = uid();
     render();
   }
@@ -614,6 +767,16 @@
       sub.className = "line-sub";
       sub.textContent = [c.email, c.phone].filter(Boolean).join(" · ");
       row.appendChild(sub);
+    }
+
+    if(supabaseClient && currentUser && c.email){
+      var st = linkStatusFor(c.email);
+      if(st){
+        var badge = document.createElement("span");
+        badge.className = "contact-status" + (st === "accepted" ? " accepted" : st === "pending" ? " pending" : "");
+        badge.textContent = st === "accepted" ? "lié" : st === "pending" ? "en attente" : st;
+        row.appendChild(badge);
+      }
     }
 
     row.addEventListener("click", function(){
@@ -646,17 +809,19 @@
       if(!name){
         contacts = contacts.filter(function(x){ return x.id !== c.id; });
         contactOpenId = null;
-        saveContacts(); render();
+        saveContactsLocal(); render();
         return;
       }
       var existing = contacts.find(function(x){ return x.id === c.id; });
+      var emailChanged = !existing || existing.email !== email;
       if(existing){
         if(existing.name === name && existing.email === email && existing.phone === phone) return;
         existing.name = name; existing.email = email; existing.phone = phone;
       } else {
         contacts.push({ id: c.id, name: name, email: email, phone: phone });
       }
-      saveContacts(); render();
+      saveContactsLocal(); render();
+      if(email && emailChanged) sendLinkRequest(email);
     }
     [nameInput, emailInput, phoneInput].forEach(function(inp){
       inp.addEventListener("keydown", function(e){ if(e.key === "Enter") commit(); });
@@ -677,7 +842,7 @@
       del.addEventListener("click", function(){
         contacts = contacts.filter(function(x){ return x.id !== c.id; });
         contactOpenId = null;
-        saveContacts(); render();
+        saveContactsLocal(); render();
       });
       panel.appendChild(del);
     }
