@@ -15,11 +15,11 @@
 
   .line-wrap{ position:relative; background:#fafaf8; }
   .trash-bg{
-    position:absolute; inset:0; display:flex; flex-direction:column; align-items:flex-end; justify-content:center;
-    gap:2px; padding-right:14px; color:#c9c6bd; pointer-events:none;
+    position:absolute; inset:0; display:flex; flex-direction:row; align-items:center; justify-content:flex-end;
+    gap:10px; padding-right:14px; color:#c9c6bd; pointer-events:none;
   }
   .trash-bg .icon{ font-size:20px; }
-  .trash-bg .word{ font-size:12px; font-weight:700; letter-spacing:.55em; white-space:nowrap; padding-right:.1em; }
+  .trash-bg .word{ font-size:12px; font-weight:700; letter-spacing:.3em; white-space:nowrap; padding-right:.1em; }
   .trash-bg.armed{ color:#b3423a; }
 
   .line{
@@ -626,6 +626,7 @@
     el.addEventListener("pointerdown", function(e){
       startX = e.clientX; startY = e.clientY; dx = 0; dy = 0;
       dragging = true; moved = false; dir = null;
+      DELETE_THRESHOLD = el.getBoundingClientRect().width / 3; // un tiers de la ligne, impossible par erreur
       el.setPointerCapture(e.pointerId);
       el.style.transition = "none";
     });
