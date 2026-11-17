@@ -85,8 +85,8 @@
 
   // Renseigne ces deux valeurs (Supabase → Project Settings → API) pour activer
   // la connexion et la synchro. Tant qu'elles sont vides, l'app reste 100% locale.
-  var SUPABASE_URL = "";
-  var SUPABASE_ANON_KEY = "";
+  var SUPABASE_URL = "https://api.jppcompta.fr";
+  var SUPABASE_ANON_KEY = "sb_publishable_E0IT5d21ODLOM3b6gS4C7i_RQB7BdmR";
 
   var supabaseClient = (SUPABASE_URL && SUPABASE_ANON_KEY && window.supabase)
     ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
@@ -164,7 +164,7 @@
       updated_at: new Date().toISOString()
     }).then(function(res){
       if(res.error) console.error("Supabase upsert:", res.error.message);
-    });
+    }).catch(function(err){ console.error("Supabase upsert (réseau):", err.message); });
   }
 
   function loadRemoteThenRender(){
@@ -181,6 +181,10 @@
         }
         view = "tasks";
         render();
+      })
+      .catch(function(err){
+        console.error("Supabase select (réseau):", err.message);
+        view = "tasks"; render(); // on continue avec les données locales plutôt que de rester bloqué
       });
   }
 
@@ -259,6 +263,10 @@
         authDraftEmail = ""; authDraftPassword = "";
         view = "tasks";
         loadRemoteThenRender();
+      }).catch(function(err){
+        submit.disabled = false;
+        authError = "Erreur réseau : " + err.message;
+        render();
       });
     }
     submit.addEventListener("click", submitForm);
@@ -278,6 +286,10 @@
       currentUser = null;
       view = "auth"; authMode = "login";
       render();
+    }).catch(function(){
+      currentUser = null;
+      view = "auth"; authMode = "login";
+      render();
     });
   }
 
@@ -292,6 +304,10 @@
         view = "auth";
         render();
       }
+    }).catch(function(err){
+      console.error("Supabase getSession (réseau):", err.message);
+      view = "auth";
+      render();
     });
   }
 
