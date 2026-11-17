@@ -509,6 +509,11 @@
       function commitName(){
         var v = nameInput.value.trim();
         if(!v){
+          if(t.assigneeId){
+            // verrouillé : une tâche déléguée ne peut pas être supprimée de ce côté
+            nameInput.value = t.text;
+            return;
+          }
           tasks = tasks.filter(function(x){ return x.id !== t.id; });
           deleteTaskRemote(t.id);
           openId = null;
@@ -590,6 +595,7 @@
 
   function attachGestures(el, t, trashBg){
     var mine = isMine(t);
+    var locked = mine && !!t.assigneeId; // tâche déléguée : pas de suppression/archivage de ce côté
     var startX = 0, startY = 0, dx = 0, dy = 0, dragging = false, moved = false, dir = null;
     var H_THRESHOLD = 70, LOCK = 8;
 
@@ -610,7 +616,7 @@
       }
       if(dir === "h") el.style.transform = "translateX(" + dx + "px)";
       else if(dir === "v") el.style.transform = "translateY(" + dy + "px)";
-      if(dir === "h" && dx < 0){
+      if(dir === "h" && dx < 0 && !locked){
         trashBg.classList.toggle("armed", dx <= -H_THRESHOLD);
       } else {
         trashBg.classList.remove("armed");
@@ -630,7 +636,7 @@
         return;
       }
       if(dir === "h" && dx <= -H_THRESHOLD){
-        archiveTask(t);
+        if(!locked) archiveTask(t);
       } else if(dir === "h" && dx >= H_THRESHOLD && mine){
         openId = t.id; openType = "assign";
         render();
