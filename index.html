@@ -15,9 +15,11 @@
 
   .line-wrap{ position:relative; background:#fafaf8; }
   .trash-bg{
-    position:absolute; inset:0; display:flex; align-items:center; justify-content:flex-end;
-    padding-right:14px; font-size:20px; color:#c9c6bd; pointer-events:none;
+    position:absolute; inset:0; display:flex; flex-direction:column; align-items:flex-end; justify-content:center;
+    gap:2px; padding-right:14px; color:#c9c6bd; pointer-events:none;
   }
+  .trash-bg .icon{ font-size:20px; }
+  .trash-bg .word{ font-size:12px; font-weight:700; letter-spacing:.09em; white-space:nowrap; }
   .trash-bg.armed{ color:#b3423a; }
 
   .line{
@@ -468,7 +470,7 @@
 
     var trashBg = document.createElement("div");
     trashBg.className = "trash-bg";
-    trashBg.textContent = "🗑";
+    trashBg.innerHTML = '<span class="icon">🗑</span><span class="word">POUBELLE</span>';
     wrap.appendChild(trashBg);
 
     var row = document.createElement("div");
@@ -619,7 +621,7 @@
     var mine = isMine(t);
     var locked = mine && !!t.assigneeId; // tâche déléguée : pas de suppression/archivage de ce côté
     var startX = 0, startY = 0, dx = 0, dy = 0, dragging = false, moved = false, dir = null;
-    var H_THRESHOLD = 70, LOCK = 8;
+    var H_THRESHOLD = 70, DELETE_THRESHOLD = 85, LOCK = 8;
 
     el.addEventListener("pointerdown", function(e){
       startX = e.clientX; startY = e.clientY; dx = 0; dy = 0;
@@ -639,7 +641,7 @@
       if(dir === "h") el.style.transform = "translateX(" + dx + "px)";
       else if(dir === "v") el.style.transform = "translateY(" + dy + "px)";
       if(dir === "h" && dx < 0 && !locked){
-        trashBg.classList.toggle("armed", dx <= -H_THRESHOLD);
+        trashBg.classList.toggle("armed", dx <= -DELETE_THRESHOLD);
       } else {
         trashBg.classList.remove("armed");
       }
@@ -657,7 +659,7 @@
         render();
         return;
       }
-      if(dir === "h" && dx <= -H_THRESHOLD){
+      if(dir === "h" && dx <= -DELETE_THRESHOLD){
         if(!locked) archiveTask(t);
       } else if(dir === "h" && dx >= H_THRESHOLD && mine){
         openId = t.id; openType = "assign";
