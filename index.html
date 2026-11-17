@@ -590,6 +590,20 @@
       });
     }
 
+    var input = document.createElement("input");
+    input.type = "text";
+    input.placeholder = contacts.length ? "ou un autre nom…" : "assigné à… (nom libre)";
+    input.value = t.assigneeEmail && !contacts.some(function(c){ return c.email === t.assigneeEmail; }) ? t.assigneeEmail : "";
+    function commit(){
+      var v = input.value.trim();
+      if(v){ t.assigneeEmail = v; t.assigneeId = null; }
+      openId = null;
+      saveTasksLocal(); saveTaskRemote(t); render();
+    }
+    input.addEventListener("keydown", function(e){ if(e.key === "Enter") commit(); });
+    input.addEventListener("blur", commit);
+    panel.appendChild(input);
+
     return panel;
   }
 
