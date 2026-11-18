@@ -1,20 +1,21 @@
-// Edge Function : envoie un email via Resend quand une demande de liaison
-// ou une tâche assignée nécessite de prévenir l'autre personne.
+// Edge Function : envoie un email via Gmail (SMTP) quand une demande de
+// liaison ou une tâche assignée nécessite de prévenir l'autre personne.
 //
 // Secrets à configurer (Studio -> Edge Functions -> Secrets) :
-//   RESEND_API_KEY   - clé API resend.com
-//   SUPABASE_URL     - déjà présent par défaut sur la plupart des instances
-//   SUPABASE_ANON_KEY - la clé publishable (la même que dans index.html)
-//   NOTIFY_FROM      - optionnel, ex. "Organizator <notifications@jppcompta.fr>"
-//                       (nécessite un domaine vérifié sur Resend ; sinon garde
-//                       la valeur par défaut onboarding@resend.dev pour tester)
+//   GMAIL_USER         - jppcompta@gmail.com
+//   GMAIL_APP_PASSWORD - mot de passe d'application à 16 caractères
+//                         (compte Google -> Sécurité -> Validation en 2 étapes
+//                         -> Mots de passe des applications)
+//   SUPABASE_URL       - déjà présent par défaut sur la plupart des instances
+//   SUPABASE_ANON_KEY  - la clé publishable (la même que dans index.html)
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { SMTPClient } from "https://deno.land/x/denomailer/mod.ts";
 
-const RESEND_API_KEY = Deno.env.get("RESEND_API_KEY") || "";
+const GMAIL_USER = Deno.env.get("GMAIL_USER") || "";
+const GMAIL_APP_PASSWORD = Deno.env.get("GMAIL_APP_PASSWORD") || "";
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") || "";
 const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY") || "";
-const FROM = Deno.env.get("NOTIFY_FROM") || "Organizator <onboarding@resend.dev>";
 
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -31,7 +32,9 @@ function escapeHtml(s: string) {
 
 Deno.serve(async (req) => {
   if (req.method !== "POST") return json({ error: "Méthode non autorisée" }, 405);
-  if (!RESEND_API_KEY) return json({ error: "RESEND_API_KEY non configurée" }, 500);
+  if (!GMAIL_USER || !GMAIL_APP_PASSWORD) {
+    return json({ error: "GMAIL_USER / GMAIL_APP_PASSWORD non configurés" }, 500);
+  }
 
   const authHeader = req.headers.get("Authorization") || "";
   if (!authHeader) return json({ error: "Non authentifié" }, 401);
@@ -88,18 +91,27 @@ Deno.serve(async (req) => {
     return json({ error: "Type inconnu" }, 400);
   }
 
-  const res = await fetch("https://api.resend.com/emails", {
-    method: "POST",
-    headers: {
-      "Authorization": `Bearer ${RESEND_API_KEY}`,
-      "Content-Type": "application/json",
+  const client = new SMTPClient({
+    connection: {
+      hostname: "smtp.gmail.com",
+      port: 465,
+      tls: true,
+      auth: { username: GMAIL_USER, password: GMAIL_APP_PASSWORD },
     },
-    body: JSON.stringify({ from: FROM, to: [target_email], subject, html }),
   });
 
-  if (!res.ok) {
-    const errText = await res.text();
-    return json({ error: "Échec envoi Resend: " + errText }, 502);
+  try {
+    await client.send({
+      from: GMAIL_USER,
+      to: target_email,
+      subject,
+      html,
+      content: "auto",
+    });
+  } catch (err) {
+    return json({ error: "Échec envoi SMTP: " + (err as Error).message }, 502);
+  } finally {
+    await client.close();
   }
 
   return json({ ok: true });
