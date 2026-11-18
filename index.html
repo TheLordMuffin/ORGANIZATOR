@@ -240,9 +240,19 @@
         requester_email: currentUser.email,
         target_email: email
       }).then(function(r){
-        if(!r.error) refreshLinks(render);
+        if(!r.error){ refreshLinks(render); notifyByEmail("link_request", email); }
       }).catch(function(){});
     }).catch(function(){});
+  }
+
+  // Best-effort : prévient par email via la fonction Edge notify-assignment.
+  // N'empêche jamais l'app de fonctionner si ça échoue (fonction pas encore
+  // déployée, Resend pas configuré, etc.) — juste un plus quand c'est prêt.
+  function notifyByEmail(type, targetEmail, taskText){
+    if(!supabaseClient || !currentUser) return;
+    supabaseClient.functions.invoke("notify-assignment", {
+      body: { type: type, target_email: targetEmail, task_text: taskText || "" }
+    }).catch(function(err){ console.error("notify-assignment:", err.message); });
   }
 
   function respondLink(link, accept){
@@ -590,11 +600,14 @@
             });
             t.assigneeId = link.requester_email === currentUser.email ? link.target_id : link.requester_id;
             t.assigneeEmail = c.email;
+            openId = null;
+            saveTasksLocal(); saveTaskRemote(t); render();
+            notifyByEmail("task_assigned", c.email, t.text);
           } else {
             t.assigneeEmail = c.email || c.name;
+            openId = null;
+            saveTasksLocal(); saveTaskRemote(t); render();
           }
-          openId = null;
-          saveTasksLocal(); saveTaskRemote(t); render();
         });
         panel.appendChild(chip);
       });
